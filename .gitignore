@@ -1,0 +1,9 @@
+__pycache__/
+venv/
+.env
+logs/
+bot-media/
+.claude/
+.vscode/
+
+.mcp.json
