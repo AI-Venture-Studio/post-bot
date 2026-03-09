@@ -27,12 +27,16 @@ class _StreamToLogger:
         self.logger = logger
         self.level = level
         self.original_stream = original_stream
-        self._buf = ""
+        self._logging = False
 
     def write(self, message: str):
         self.original_stream.write(message)
-        if message and message.strip():
-            self.logger.log(self.level, message.strip())
+        if message and message.strip() and not self._logging:
+            self._logging = True
+            try:
+                self.logger.log(self.level, message.strip())
+            finally:
+                self._logging = False
 
     def flush(self):
         self.original_stream.flush()
