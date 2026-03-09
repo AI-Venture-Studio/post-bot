@@ -619,7 +619,11 @@ def run_campaign_in_thread(campaign_id: str) -> None:
 
 app = Flask(__name__)
 app.json.compact = False
-CORS(app, origins=os.environ.get("ALLOWED_ORIGINS", "*"))
+CORS(app,
+     origins=os.environ.get("ALLOWED_ORIGINS", "*").split(","),
+     methods=["GET", "POST", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization"],
+     supports_credentials=True)
 
 
 @app.route("/", methods=["GET"])
