@@ -36,7 +36,8 @@ from logger import setup_logging
 load_dotenv()
 setup_logging()
 
-from exceptions import AbortedError
+from exceptions import AbortedError, AccountLockedError
+import lock_manager
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Supabase client
@@ -47,6 +48,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 media_manager.init_media_manager(supabase)
 utils.init_utils(supabase)
+lock_manager.init_lock_manager(supabase)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EventStore — in-memory progress state
@@ -65,6 +67,7 @@ class EventStore:
         self.abort_signal: bool = False
         self.post_count: int = 0
         self.latest_sentence: str = "Waiting to start..."
+        self.locked_accounts: list[str] = []
         self.lock = threading.Lock()
 
     def clear(self):
@@ -75,6 +78,7 @@ class EventStore:
             self.abort_signal = False
             self.post_count = 0
             self.latest_sentence = "Waiting to start..."
+            self.locked_accounts = []
 
     def is_aborted(self) -> bool:
         with self.lock:
@@ -123,6 +127,7 @@ class EventStore:
                 "latest_sentence": self.latest_sentence,
                 "total_events": len(self.checkpoints),
                 "post_count": self.post_count,
+                "locked_accounts": list(self.locked_accounts),
             }
 
 
@@ -304,6 +309,12 @@ def preflight_check(campaign: dict) -> tuple[bool, str]:
         if not record.get("browser_profile"):
             return False, f"Account @{username} has no browser_profile configured"
 
+    # Check for accounts locked by another bot
+    locked = lock_manager.check_locked_accounts(user_accounts, platform)
+    if locked:
+        names = ", ".join(f"@{u} (held by {owner.split(':')[0]})" for u, owner in locked.items())
+        return False, f"Accounts currently in use by another bot: {names}"
+
     preflight_dolphin = DolphinAntyClient()
     if not preflight_dolphin.login(show_progress=True):
         return False, "Dolphin Anty is not reachable at the configured local API URL"
@@ -332,6 +343,11 @@ async def run_account(
     platform = campaign["platform"]
     record = get_account_record(account, platform)
     browser_profile_name = record["browser_profile"]
+
+    # ── Acquire cross-bot lock ────────────────────────────────────────────────
+    bot_id = f"post-bot:{campaign['campaign_id']}"
+    if not lock_manager.acquire_lock(account, platform, bot_id):
+        raise AccountLockedError(f"@{account} is in use by another bot")
 
     # ── Instantiate Dolphin per-account ────────────────────────────────────────
     dolphin = DolphinAntyClient()
@@ -449,6 +465,12 @@ async def run_account(
         except Exception as e:
             print(f'[WARN] Could not stop profile: {e}')
 
+        # Release cross-bot lock (always, even on error)
+        try:
+            lock_manager.release_lock(account, platform, f"post-bot:{campaign['campaign_id']}")
+        except Exception:
+            pass
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Campaign runner
@@ -511,6 +533,11 @@ async def process_campaign(campaign: dict) -> None:
 
         try:
             await run_account(account, campaign, media_paths)
+        except AccountLockedError as e:
+            print(f'\n[LOCK] {e} — skipping')
+            emitter.post_failed(account, reason=str(e))
+            event_store.locked_accounts.append(account)
+            # Do NOT set failed = True — locked is not a permanent failure
         except Exception as e:
             print(f'\n[ERR] Account @{account} failed: {e}')
             failed = True

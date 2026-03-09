@@ -27,7 +27,7 @@ class _StreamToLogger:
         self.logger = logger
         self.level = level
         self.original_stream = original_stream
-        self.buffer = ""
+        self._buf = ""
 
     def write(self, message: str):
         self.original_stream.write(message)

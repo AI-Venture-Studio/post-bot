@@ -178,9 +178,10 @@ class TwitterPoster:
         Falls back to a simple sleep if the selector check fails.
         """
         try:
+            selector = SEL_COMPOSE_BOX.replace("'", "\\'")
             await self.page.wait_for_function(
                 f"""() => {{
-                    const box = document.querySelector('{SEL_COMPOSE_BOX.replace("'", "\\'")}');
+                    const box = document.querySelector('{selector}');
                     return !box || box.textContent.trim() === '';
                 }}""",
                 timeout=15000,
