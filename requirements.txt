@@ -1,7 +1,9 @@
-flask==3.0.0
+flask==3.0.3
 flask-cors==4.0.0
-python-dotenv==1.0.0
-supabase==2.3.0
-playwright==1.40.0
-requests==2.31.0
-waitress==3.0.0
+python-dotenv==1.0.1
+supabase==2.4.2
+playwright==1.48.0
+requests==2.32.3
+waitress==3.0.1
+websockets==14.1
+httpx==0.28.1
