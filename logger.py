@@ -106,6 +106,7 @@ def setup_logging() -> None:
     logger = logging.getLogger("post-bot")
     logger.setLevel(logging.DEBUG)
     logger.addHandler(file_handler)
+    logger.propagate = False
 
     # Redirect print() → logger (while keeping console output)
     sys.stdout = _StreamToLogger(logger, logging.INFO, sys.__stdout__)
