@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Injected by app.py after Supabase client is initialised
 _supabase = None
 STORAGE_BUCKET = "campaign-media"
-LOCAL_MEDIA_DIR = "bot-media"
+LOCAL_MEDIA_DIR = Path(__file__).parent / "bot-media"
 ORPHAN_MAX_AGE_SECONDS = 86400  # 24 hours
 
 
@@ -32,6 +32,25 @@ def init_media_manager(supabase_client):
     """Call once at startup to inject the Supabase client."""
     global _supabase
     _supabase = supabase_client
+
+
+def _rmtree_with_retry(path: Path, max_retries: int = 3, delay: float = 1.0) -> None:
+    """
+    Attempt shutil.rmtree with retries for Windows file lock scenarios.
+    Logs a warning if deletion fails after all retries (non-fatal).
+    """
+    for attempt in range(max_retries):
+        try:
+            shutil.rmtree(path)
+            return
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+            else:
+                logger.warning(
+                    f"Could not delete {path} after {max_retries} attempts: {e}. "
+                    f"Orphan cleanup will handle it on next startup."
+                )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,7 +127,7 @@ def delete_local_campaign_dir(campaign_id: str) -> None:
     """Delete the local temp directory for a campaign."""
     local_dir = Path(LOCAL_MEDIA_DIR) / campaign_id
     if local_dir.exists():
-        shutil.rmtree(local_dir, ignore_errors=True)
+        _rmtree_with_retry(local_dir)
         logger.info(f"Deleted local media dir: {local_dir}")
 
 
@@ -142,5 +161,5 @@ def cleanup_orphan_temp_files() -> None:
             continue
         age = now - subdir.stat().st_mtime
         if age > ORPHAN_MAX_AGE_SECONDS:
-            shutil.rmtree(subdir, ignore_errors=True)
+            _rmtree_with_retry(subdir)
             logger.info(f"Orphan cleanup: removed {subdir} (age: {age/3600:.1f}h)")

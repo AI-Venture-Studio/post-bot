@@ -17,8 +17,15 @@ Architecture note:
 
 import asyncio
 import os
+import platform
 import threading
+import time as _time
 from datetime import datetime
+
+# Fix 2: Windows defaults to ProactorEventLoop which causes issues with
+# Playwright in background threads. Force SelectorEventLoop on Windows.
+if platform.system() == "Windows":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
@@ -309,8 +316,22 @@ def preflight_check(campaign: dict) -> tuple[bool, str]:
         if not record.get("browser_profile"):
             return False, f"Account @{username} has no browser_profile configured"
 
+    # Dolphin Anty reachability — retry in production (NSSM may start before Dolphin)
     preflight_dolphin = DolphinAntyClient()
-    if not preflight_dolphin.login(show_progress=True):
+    production = os.environ.get("PRODUCTION", "false").lower() == "true"
+    max_attempts = 5 if production else 1
+    dolphin_connected = False
+
+    for attempt in range(max_attempts):
+        if preflight_dolphin.login(show_progress=(attempt == 0)):
+            dolphin_connected = True
+            break
+        if attempt < max_attempts - 1:
+            wait = 2 ** (attempt + 1)  # 2s, 4s, 8s, 16s
+            print(f"[WAIT] Dolphin Anty not ready — retrying in {wait}s ({attempt + 1}/{max_attempts})")
+            _time.sleep(wait)
+
+    if not dolphin_connected:
         return False, "Dolphin Anty is not reachable at the configured local API URL"
 
     if media_urls:

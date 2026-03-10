@@ -8,8 +8,10 @@ to both the console and a rotating log file under the `logs/` directory.
 """
 
 import os
+import re
 import sys
 import logging
+import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -20,6 +22,17 @@ MAX_BYTES = 5 * 1024 * 1024  # 5 MB per file
 BACKUP_COUNT = 5              # keep 5 rotated files (25 MB total max)
 
 
+class _AccessLogFilter(logging.Filter):
+    """Downgrade HTTP access log lines (200/3xx) from WARNING/ERROR to DEBUG."""
+    _ACCESS_LOG_RE = re.compile(r'HTTP/1\.[01]"\s+[23]\d{2}\s')
+
+    def filter(self, record):
+        if self._ACCESS_LOG_RE.search(record.getMessage()):
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+        return True
+
+
 class _StreamToLogger:
     """Redirect writes (from print()) to a logger while also writing to the original stream."""
 
@@ -27,19 +40,49 @@ class _StreamToLogger:
         self.logger = logger
         self.level = level
         self.original_stream = original_stream
-        self._logging = False
+        self._thread_local = threading.local()
+
+    def _is_logging(self) -> bool:
+        return getattr(self._thread_local, 'logging', False)
+
+    def _set_logging(self, value: bool):
+        self._thread_local.logging = value
 
     def write(self, message: str):
-        self.original_stream.write(message)
-        if message and message.strip() and not self._logging:
-            self._logging = True
+        if self.original_stream is not None:
+            self.original_stream.write(message)
+        if message and message.strip() and not self._is_logging():
+            self._set_logging(True)
             try:
                 self.logger.log(self.level, message.strip())
             finally:
-                self._logging = False
+                self._set_logging(False)
 
     def flush(self):
-        self.original_stream.flush()
+        if self.original_stream is not None:
+            self.original_stream.flush()
+
+    @property
+    def encoding(self):
+        if self.original_stream is not None and hasattr(self.original_stream, 'encoding'):
+            return self.original_stream.encoding
+        return 'utf-8'
+
+    @property
+    def name(self):
+        if self.original_stream is not None and hasattr(self.original_stream, 'name'):
+            return self.original_stream.name
+        return '<logger>'
+
+    def fileno(self):
+        if self.original_stream is not None and hasattr(self.original_stream, 'fileno'):
+            return self.original_stream.fileno()
+        raise OSError("no underlying file descriptor")
+
+    def isatty(self):
+        if self.original_stream is not None and hasattr(self.original_stream, 'isatty'):
+            return self.original_stream.isatty()
+        return False
 
 
 def setup_logging() -> None:
@@ -58,11 +101,12 @@ def setup_logging() -> None:
         encoding="utf-8",
     )
     file_handler.setFormatter(formatter)
+    file_handler.addFilter(_AccessLogFilter())
 
     logger = logging.getLogger("post-bot")
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     logger.addHandler(file_handler)
 
     # Redirect print() → logger (while keeping console output)
     sys.stdout = _StreamToLogger(logger, logging.INFO, sys.__stdout__)
-    sys.stderr = _StreamToLogger(logger, logging.ERROR, sys.__stderr__)
+    sys.stderr = _StreamToLogger(logger, logging.WARNING, sys.__stderr__)

@@ -413,11 +413,36 @@ class DolphinAntyClient:
 
                     if is_file_lock_error:
                         print(f'[ERR] Windows file lock detected on profile {profile_id}!')
-                        print(f'[ERR] The browser profile has corrupted/locked files from a previous crash.')
-                        print(f'[ERR] FIX: Run this on Windows server:')
+                        print(f'[INFO] Attempting automatic cleanup...')
+
+                        # Attempt auto-cleanup on Windows before giving up
+                        import platform as _platform
+                        if _platform.system() == "Windows":
+                            import subprocess
+                            default_dir = (
+                                f"C:\\Users\\Administrator\\AppData\\Roaming\\"
+                                f"dolphin_anty\\browser_profiles\\{profile_id}\\data_dir\\Default"
+                            )
+                            try:
+                                result = subprocess.run(
+                                    ["powershell", "-Command",
+                                     f'Remove-Item -Recurse -Force "{default_dir}" -ErrorAction Stop'],
+                                    capture_output=True, text=True, timeout=15
+                                )
+                                if result.returncode == 0:
+                                    print(f'[OK] Auto-cleaned profile {profile_id} Default directory')
+                                    print(f'[INFO] Retrying profile start...')
+                                    time.sleep(3)
+                                    continue  # Retry within the for attempt loop
+                                else:
+                                    print(f'[WARN] Auto-cleanup failed: {result.stderr.strip()}')
+                            except Exception as e:
+                                print(f'[WARN] Auto-cleanup exception: {e}')
+
+                        # If auto-cleanup failed or not on Windows, fall through to manual instructions
+                        print(f'[ERR] Manual fix required — run on Windows server:')
                         print(f'[ERR]   Remove-Item -Recurse -Force "C:\\Users\\Administrator\\AppData\\Roaming\\dolphin_anty\\browser_profiles\\{profile_id}\\data_dir\\Default"')
                         print(f'[ERR] Or assign a different browser profile to this account.')
-                        # Don't retry - file locks won't clear with simple retries
                         return None
 
                     # On 500 error, profile might be in bad state - try stopping it first
