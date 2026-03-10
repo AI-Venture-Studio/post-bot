@@ -309,12 +309,6 @@ def preflight_check(campaign: dict) -> tuple[bool, str]:
         if not record.get("browser_profile"):
             return False, f"Account @{username} has no browser_profile configured"
 
-    # Check for accounts locked by another bot
-    locked = lock_manager.check_locked_accounts(user_accounts, platform)
-    if locked:
-        names = ", ".join(f"@{u} (held by {owner.split(':')[0]})" for u, owner in locked.items())
-        return False, f"Accounts currently in use by another bot: {names}"
-
     preflight_dolphin = DolphinAntyClient()
     if not preflight_dolphin.login(show_progress=True):
         return False, "Dolphin Anty is not reachable at the configured local API URL"
@@ -354,6 +348,7 @@ async def run_account(
     profile_id = None
     playwright_instance = None
     browser = None
+    page = None
 
     try:
         # ── Login to Dolphin Anty ──────────────────────────────────────────────
@@ -537,6 +532,11 @@ async def process_campaign(campaign: dict) -> None:
             print(f'\n[LOCK] {e} — skipping')
             emitter.post_failed(account, reason=str(e))
             event_store.locked_accounts.append(account)
+            # Defensive release — lock may have been acquired despite returning False
+            try:
+                lock_manager.release_lock(account, platform, f"post-bot:{campaign['campaign_id']}")
+            except Exception:
+                pass
             # Do NOT set failed = True — locked is not a permanent failure
         except Exception as e:
             print(f'\n[ERR] Account @{account} failed: {e}')
@@ -659,6 +659,21 @@ def start():
     if campaign["status"] != "not-started":
         return jsonify({"error": f"Campaign cannot be started (status: {campaign['status']})"}), 409
 
+    # Check for locked accounts before spawning background thread
+    user_accounts = campaign.get("user_accounts") or []
+    platform = campaign.get("platform")
+    if user_accounts and platform:
+        locked = lock_manager.check_locked_accounts(user_accounts, platform)
+        if locked:
+            names = ", ".join(
+                f"@{u} (held by {owner.split(':')[0]})"
+                for u, owner in locked.items()
+            )
+            return jsonify({
+                "error": f"Accounts currently in use: {names}",
+                "locked_accounts": locked,
+            }), 409
+
     event_store.clear()
     event_store.set_status("running")
 
@@ -677,6 +692,18 @@ def abort():
     event_store.set_abort()
     print('[ABORT] Abort signal set')
     return jsonify({"message": "Abort signal sent"})
+
+
+@app.route("/api/locked-accounts", methods=["POST"])
+def locked_accounts():
+    """Return which of the given accounts are currently locked."""
+    data = request.get_json(silent=True) or {}
+    usernames = data.get("usernames", [])
+    platform = data.get("platform", "")
+    if not usernames or not platform:
+        return jsonify({"locked": {}})
+    locked = lock_manager.check_locked_accounts(usernames, platform)
+    return jsonify({"locked": locked})
 
 
 @app.route("/api/progress/current", methods=["GET"])

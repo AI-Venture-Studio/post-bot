@@ -32,30 +32,46 @@ def acquire_lock(username: str, platform: str, bot_id: str) -> bool:
     """
     Atomically acquire a lock on a social account.
 
-    The UPDATE only touches the row if locked_by IS NULL (available) or
-    locked_at is older than LOCK_TTL_MINUTES (stale / crashed bot).
+    The UPDATE only touches the row if locked_by IS NULL (available),
+    locked_at IS NULL (corrupt state), or locked_at is older than
+    LOCK_TTL_MINUTES (stale / crashed bot).
+
+    After the UPDATE, a follow-up SELECT verifies ownership — this avoids
+    relying on result.data from the UPDATE, which some supabase-py versions
+    return as empty even on success.
 
     Returns True if the lock was acquired, False otherwise.
     """
     threshold = (datetime.now(timezone.utc) - timedelta(minutes=LOCK_TTL_MINUTES)).isoformat()
     try:
-        result = (
-            _supabase.table("social_accounts")
+        # Attempt the conditional update
+        _supabase.table("social_accounts") \
             .update({
                 "locked_by": bot_id,
                 "locked_at": datetime.now(timezone.utc).isoformat(),
-            })
+            }) \
+            .eq("username", username) \
+            .eq("platform", platform) \
+            .or_(f"locked_by.is.null,locked_at.is.null,locked_at.lt.{threshold}") \
+            .execute()
+
+        # Verify by reading current state (don't rely on UPDATE response)
+        verify = (
+            _supabase.table("social_accounts")
+            .select("locked_by, locked_at")
             .eq("username", username)
             .eq("platform", platform)
-            .or_(f"locked_by.is.null,locked_at.lt.{threshold}")
             .execute()
         )
-        acquired = len(result.data) > 0
-        if acquired:
+
+        if verify.data and verify.data[0].get("locked_by") == bot_id:
             print(f"[LOCK] Acquired lock for @{username} ({bot_id})")
+            return True
         else:
-            print(f"[LOCK] Cannot lock @{username} — held by another bot")
-        return acquired
+            holder = verify.data[0].get("locked_by") if verify.data else "unknown"
+            locked_at = verify.data[0].get("locked_at") if verify.data else "unknown"
+            print(f"[LOCK] Cannot lock @{username} — held by {holder} since {locked_at}")
+            return False
     except Exception as e:
         logger.error(f"[LOCK] Failed to acquire lock for @{username}: {e}")
         return False
@@ -101,11 +117,16 @@ def check_locked_accounts(usernames: list[str], platform: str) -> dict:
         for row in result.data:
             lb = row.get("locked_by")
             la = row.get("locked_at")
-            if lb and la:
-                lock_time = datetime.fromisoformat(la.replace("Z", "+00:00"))
-                if lock_time > threshold:
-                    locked[row["username"]] = lb
+            if lb:
+                if not la:
+                    # Data inconsistency: locked_by set but locked_at missing
+                    locked[row["username"]] = f"{lb} (stale — missing timestamp)"
+                else:
+                    lock_time = datetime.fromisoformat(la.replace("Z", "+00:00"))
+                    if lock_time > threshold:
+                        locked[row["username"]] = lb
         return locked
     except Exception as e:
-        logger.error(f"[LOCK] Failed to check locked accounts: {e}")
+        logger.error(f"[LOCK] WARNING: Failed to check locked accounts: {e}")
+        print(f"[LOCK] WARNING: Proceeding without lock validation — accounts may conflict")
         return {}
