@@ -33,7 +33,6 @@ from supabase import create_client, Client
 
 from dolphin import DolphinAntyClient
 from instagram import InstagramPoster, BotChallengeError as IGChallengeError
-from twitter import TwitterPoster, BotChallengeError as XChallengeError
 from threads import ThreadsPoster, BotChallengeError as ThreadsChallengeError
 import media_manager
 import utils
@@ -436,8 +435,6 @@ async def run_account(
         # ── Run platform automation ────────────────────────────────────────────
         if platform == "instagram":
             poster = InstagramPoster(page, campaign, media_paths, emitter, account, event_store)
-        elif platform == "x":
-            poster = TwitterPoster(page, campaign, media_paths, emitter, account, event_store)
         elif platform == "threads":
             poster = ThreadsPoster(page, campaign, media_paths, emitter, account, event_store)
         else:
@@ -450,7 +447,7 @@ async def run_account(
         print(f'[ABORT] @{account} aborted by user')
         raise
 
-    except (IGChallengeError, XChallengeError, ThreadsChallengeError) as e:
+    except (IGChallengeError, ThreadsChallengeError) as e:
         emitter.post_failed(account, reason=str(e))
         raise
 
@@ -651,7 +648,7 @@ def index():
     return jsonify({
         "message": "Social Media Post Bot API by AIVS",
         "status": "running",
-        "version": "1.0 - Instagram Integration",
+        "version": "2.0 - Threads Integration",
     })
 
 

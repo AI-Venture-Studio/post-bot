@@ -456,7 +456,16 @@ class DolphinAntyClient:
                     continue
 
                 # Parse response
-                data = response.json()
+                try:
+                    data = response.json()
+                except Exception:
+                    raw = response.text[:500] if response.text else '(empty response)'
+                    last_error = f'Invalid JSON from Dolphin Anty (status {response.status_code}): {raw}'
+                    print(f'[WARN] Profile start attempt {attempt + 1}/{max_retries}: {last_error}')
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)
+                    continue
+
                 if not data.get('success'):
                     error_msg = data.get('error', 'Unknown error from Dolphin Anty')
                     last_error = f'Profile start failed: {error_msg}'
