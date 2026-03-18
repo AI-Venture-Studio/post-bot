@@ -189,6 +189,7 @@ class ThreadsPoster:
             .or_(self.page.get_by_role("link", name="New thread"))
             .or_(self.page.get_by_label("New thread"))
         )
+        logger.info(f"[@{self.account}] Waiting for compose button to appear")
         await compose_btn.first.wait_for(state="visible", timeout=15000)
 
         # Human-like mouse movement to button center
@@ -222,6 +223,7 @@ class ThreadsPoster:
         with placeholder "What's new?". Uses a tiered locator strategy with retries
         to handle slow network and overlay interference.
         """
+        logger.info(f"[@{self.account}] Locating text editor in compose overlay")
         dialog = self.page.get_by_role("dialog")
 
         # Tiered locator strategy — based on actual Threads compose dialog UI.
@@ -366,16 +368,25 @@ class ThreadsPoster:
         dialog = self.page.get_by_role("dialog")
         post_btn = dialog.get_by_role("button", name="Post").first
 
+        logger.info(f"[@{self.account}] Waiting for Post button to appear")
         try:
             await post_btn.wait_for(state="visible", timeout=10000)
+            logger.info(f"[@{self.account}] Post button visible")
         except Exception:
+            logger.warning(f"[@{self.account}] Post button did not appear within 10s — compose overlay may not have opened")
             raise RuntimeError("Post button did not appear within timeout")
 
         # wait_for() only accepts "attached"/"detached"/"visible"/"hidden" —
         # there is no "enabled" state. expect().to_be_enabled() auto-retries.
+        logger.info(f"[@{self.account}] Waiting for Post button to be enabled")
         try:
             await expect(post_btn).to_be_enabled(timeout=10000)
+            logger.info(f"[@{self.account}] Post button enabled — ready to submit")
         except Exception:
+            logger.warning(
+                f"[@{self.account}] Post button remained disabled after 10s — "
+                "text may not have been registered by the Lexical editor"
+            )
             raise RuntimeError(
                 "Post button remained disabled — text or media may not have "
                 "been registered by the Lexical editor"
@@ -405,25 +416,27 @@ class ThreadsPoster:
         Final: assume success after a delay.
         """
         # Primary: overlay should close on success
+        logger.info(f"[@{self.account}] Verifying post — waiting for compose overlay to close (up to 30s)")
         try:
             await self.page.get_by_role("dialog").wait_for(state="hidden", timeout=30000)
             logger.info(f"[@{self.account}] Compose overlay closed — post likely succeeded")
             await asyncio.sleep(2)
             return
         except Exception:
-            pass
+            logger.info(f"[@{self.account}] Overlay still open after 30s — checking for success toast")
 
         # Fallback 1: check for success toast text
         success_text = self.page.get_by_text(
             re.compile(r"thread (posted|published|shared)|posted successfully", re.IGNORECASE)
         )
+        logger.info(f"[@{self.account}] Fallback: looking for success toast text (up to 10s)")
         try:
             await success_text.first.wait_for(state="visible", timeout=10000)
             logger.info(f"[@{self.account}] Success text detected")
             await asyncio.sleep(2)
             return
         except Exception:
-            pass
+            logger.info(f"[@{self.account}] No success toast detected — using final fallback (5s wait)")
 
         # Final fallback: assume success
         await asyncio.sleep(5)

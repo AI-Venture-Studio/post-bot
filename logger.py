@@ -103,10 +103,15 @@ def setup_logging() -> None:
     file_handler.setFormatter(formatter)
     file_handler.addFilter(_AccessLogFilter())
 
+    # Attach file handler to the root logger so all modules using
+    # logging.getLogger(__name__) (e.g. threads.py, instagram.py) write to file.
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(file_handler)
+
+    # Keep a named logger for print() redirection
     logger = logging.getLogger("post-bot")
     logger.setLevel(logging.DEBUG)
-    logger.addHandler(file_handler)
-    logger.propagate = False
 
     # Redirect print() → logger (while keeping console output)
     sys.stdout = _StreamToLogger(logger, logging.INFO, sys.__stdout__)
