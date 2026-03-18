@@ -362,6 +362,13 @@ async def run_account(
     if not lock_manager.acquire_lock(account, platform, bot_id):
         raise AccountLockedError(f"@{account} is in use by another bot")
 
+    # ── Acquire profile-level lock ────────────────────────────────────────────
+    if not lock_manager.acquire_profile_lock(browser_profile_name, bot_id):
+        lock_manager.release_lock(account, platform, bot_id)
+        raise AccountLockedError(
+            f"Browser profile '{browser_profile_name}' is in use by another bot"
+        )
+
     # ── Instantiate Dolphin per-account ────────────────────────────────────────
     dolphin = DolphinAntyClient()
     profile_id = None
@@ -477,7 +484,13 @@ async def run_account(
         except Exception as e:
             print(f'[WARN] Could not stop profile: {e}')
 
-        # Release cross-bot lock (always, even on error)
+        # Release profile lock
+        try:
+            lock_manager.release_profile_lock(browser_profile_name, f"post-bot:{campaign['campaign_id']}")
+        except Exception:
+            pass
+
+        # Release cross-bot account lock (always, even on error)
         try:
             lock_manager.release_lock(account, platform, f"post-bot:{campaign['campaign_id']}")
         except Exception:

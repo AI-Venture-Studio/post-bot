@@ -130,3 +130,61 @@ def check_locked_accounts(usernames: list[str], platform: str) -> dict:
         logger.error(f"[LOCK] WARNING: Failed to check locked accounts: {e}")
         print(f"[LOCK] WARNING: Proceeding without lock validation — accounts may conflict")
         return {}
+
+
+def acquire_profile_lock(profile_name: str, bot_id: str) -> bool:
+    """
+    Atomically acquire a lock on a Dolphin Anty browser profile.
+
+    Prevents two bots from starting the same browser profile simultaneously,
+    even when the accounts using that profile are different (Scenario 2 gap).
+
+    Same atomic UPDATE + verify pattern as acquire_lock().
+    """
+    threshold = (datetime.now(timezone.utc) - timedelta(minutes=LOCK_TTL_MINUTES)).isoformat()
+    try:
+        _supabase.table("social_accounts") \
+            .update({
+                "profile_locked_by": bot_id,
+                "profile_locked_at": datetime.now(timezone.utc).isoformat(),
+            }) \
+            .eq("browser_profile", profile_name) \
+            .or_(f"profile_locked_by.is.null,profile_locked_at.is.null,profile_locked_at.lt.{threshold}") \
+            .execute()
+
+        verify = (
+            _supabase.table("social_accounts")
+            .select("profile_locked_by, profile_locked_at")
+            .eq("browser_profile", profile_name)
+            .limit(1)
+            .execute()
+        )
+
+        if verify.data and verify.data[0].get("profile_locked_by") == bot_id:
+            print(f"[LOCK] Acquired profile lock for '{profile_name}' ({bot_id})")
+            return True
+        else:
+            holder = verify.data[0].get("profile_locked_by") if verify.data else "unknown"
+            print(f"[LOCK] Cannot lock profile '{profile_name}' — held by {holder}")
+            return False
+    except Exception as e:
+        logger.error(f"[LOCK] Failed to acquire profile lock for '{profile_name}': {e}")
+        return False
+
+
+def release_profile_lock(profile_name: str, bot_id: str) -> None:
+    """
+    Release the profile lock.
+
+    Only clears if profile_locked_by matches bot_id, preventing one bot
+    from accidentally releasing another bot's profile lock.
+    """
+    try:
+        _supabase.table("social_accounts") \
+            .update({"profile_locked_by": None, "profile_locked_at": None}) \
+            .eq("browser_profile", profile_name) \
+            .eq("profile_locked_by", bot_id) \
+            .execute()
+        print(f"[LOCK] Released profile lock for '{profile_name}'")
+    except Exception as e:
+        logger.error(f"[LOCK] Failed to release profile lock for '{profile_name}': {e}")
