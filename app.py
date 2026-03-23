@@ -385,8 +385,6 @@ async def run_account(
         print(f"[>>] Looking for assigned profile: {browser_profile_name}")
 
         profile = dolphin.find_profile_by_name(browser_profile_name)
-        if not profile:
-            profile = dolphin.find_profile_by_id(browser_profile_name)
 
         if not profile:
             raise RuntimeError(f"Browser profile '{browser_profile_name}' not found in Dolphin Anty")

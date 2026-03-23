@@ -89,7 +89,7 @@ class DolphinAntyClient:
         return []
 
     def find_profile_by_name(self, profile_name: str) -> dict | None:
-        """Find a browser profile by its name
+        """Find a browser profile by its name, paginating through all results.
 
         Args:
             profile_name: The name of the browser profile to find
@@ -98,22 +98,37 @@ class DolphinAntyClient:
             Profile dict if found, None otherwise
         """
         try:
-            # Fetch all profiles (Dolphin Anty API doesn't support name filtering)
-            response = requests.get(
-                f'{self.public_api_url}/browser_profiles',
-                headers=self.api_headers
-            )
-            if response.status_code == 200:
+            page = 1
+            limit = 100  # fetch 100 per page
+            profile_name_lower = profile_name.lower()
+
+            while True:
+                response = requests.get(
+                    f'{self.public_api_url}/browser_profiles?page={page}&limit={limit}',
+                    headers=self.api_headers
+                )
+                if response.status_code != 200:
+                    break
+
                 profiles = response.json().get('data', [])
-                # Search for exact match (case-sensitive)
+                if not profiles:
+                    break  # no more pages
+
+                # Exact match first (case-sensitive)
                 for profile in profiles:
                     if profile.get('name') == profile_name:
                         return profile
-                # If no exact match, try case-insensitive
-                profile_name_lower = profile_name.lower()
+
+                # Case-insensitive fallback
                 for profile in profiles:
                     if profile.get('name', '').lower() == profile_name_lower:
                         return profile
+
+                if len(profiles) < limit:
+                    break  # last page reached
+
+                page += 1
+
             return None
         except Exception as e:
             print(f'[ERR] Error finding profile by name: {e}')
